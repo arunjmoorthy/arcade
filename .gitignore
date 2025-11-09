@@ -1,0 +1,24 @@
+# Environment variables
+.env
+*.env
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+.cache/
+*.cache
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
+
