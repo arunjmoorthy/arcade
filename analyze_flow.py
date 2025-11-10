@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Any
+import hashlib
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -11,6 +12,25 @@ client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
 CACHE_DIR = Path('.cache')
 CACHE_DIR.mkdir(exist_ok=True)
+
+
+def get_cache_key(data: Any) -> str:
+    """Generate a unique cache key from data."""
+    return hashlib.md5(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+
+def get_cached(key: str) -> Any:
+    """Get cached data if it exists."""
+    cache_file = CACHE_DIR / f"{key}.json"
+    if cache_file.exists():
+        return json.load(open(cache_file))
+    return None
+
+
+def set_cache(key: str, data: Any):
+    """Save data to cache."""
+    cache_file = CACHE_DIR / f"{key}.json"
+    json.dump(data, open(cache_file, 'w'), indent=2)
 
 
 class FlowAnalyzer:
@@ -143,6 +163,46 @@ class FlowAnalyzer:
             }
         
         return None
+    
+    def generate_summary(self, interactions: List[Dict[str, Any]]) -> str:
+        """Generate summary using GPT-4 (with caching)."""
+        cache_key = get_cache_key({
+            'task': 'summary',
+            'flow_name': self.flow_data.get('name', ''),
+            'interactions': interactions
+        })
+        
+        cached = get_cached(cache_key)
+        if cached:
+            print("Using cached summary")
+            return cached['summary']
+        
+        # Build prompt
+        flow_name = self.flow_data.get('name', 'Unknown Flow')
+        action_list = "\n".join([f"{idx+1}. {interaction['action']}" for idx, interaction in enumerate(interactions)])
+        
+        prompt = f"""Analyze this Arcade flow and provide a summary.
+
+        Flow: {flow_name}
+        Actions: {action_list}
+
+        Provide: 1) What the user was trying to accomplish, 2) Key steps taken, 3) Behavioral insights.
+        Write in a friendly, professional tone."""
+        
+        print("⏳ Generating summary with GPT-4...")
+        response = client.chat.completions.create(
+            model="gpt-4-turbo-preview",
+            messages=[
+                {"role": "system", "content": "Expert at analyzing user behavior and creating clear summaries."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+        )
+        
+        summary = response.choices[0].message.content.strip()
+        set_cache(cache_key, {'summary': summary})
+        print("Summary generated successfully")
+        return summary
 
 
 def main():
@@ -173,6 +233,17 @@ def main():
             print(f"{i}. {interaction['action']}")
             if interaction.get('details'):
                 print(f"   └─ {interaction['details']}")
+        
+        print("\n" + "=" * 50)
+        print("GENERATING AI SUMMARY")
+        print("=" * 50)
+        summary = analyzer.generate_summary(interactions)
+        
+        print("\n" + "-" * 50)
+        print("SUMMARY")
+        print("-" * 50)
+        print(summary)
+        print("-" * 50)
         
     except Exception as e:
         print(f"\nError: {e}")
