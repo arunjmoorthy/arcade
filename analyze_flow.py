@@ -4,8 +4,10 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Any
 import hashlib
+from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
+import requests
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
@@ -203,6 +205,118 @@ class FlowAnalyzer:
         set_cache(cache_key, {'summary': summary})
         print("Summary generated successfully")
         return summary
+    
+    def generate_social_media_image(self, summary: str) -> str:
+        """Generate social media image using DALL-E (with caching)."""
+        flow_name = self.flow_data.get('name', 'Arcade Flow')
+        cache_key = get_cache_key({'task': 'image', 'flow_name': flow_name, 'summary': summary})
+        
+        cached = get_cached(cache_key)
+        image_url = None
+        
+        if cached:
+            print("Checking cached image URL...")
+            try:
+                test_response = requests.head(cached['image_url'], timeout=5)
+                if test_response.status_code == 200:
+                    print("Using cached image URL")
+                    image_url = cached['image_url']
+                else:
+                    print("Cached URL expired, generating new image...")
+            except:
+                print("Cached URL expired, generating new image...")
+        
+        if not image_url:
+            prompt = f"""Create a modern social media image for: {flow_name}
+            
+Show: Clean e-commerce interface, shopping journey (search bar, products, cart), 
+vibrant colors (blues, reds, whites), user interactions, professional look.
+No text in image. Style: Modern, minimal, engaging."""
+            
+            print("Generating image with DALL-E...")
+            response = client.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                size="1024x1024",
+                quality="standard",
+                n=1
+            )
+            image_url = response.data[0].url
+            set_cache(cache_key, {'image_url': image_url})
+        
+        filename = f"flow_social_media_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        print(f"Downloading to {filename}...")
+        response = requests.get(image_url)
+        
+        if response.status_code != 200 or response.headers.get('content-type', '').startswith('text/'):
+            raise Exception("Failed to download image - URL may have expired")
+        
+        with open(filename, 'wb') as f:
+            f.write(response.content)
+        return filename
+    
+    def generate_report(self) -> str:
+        """Generate markdown report."""
+        print("Analyzing flow...")
+        interactions = self.extract_user_interactions()
+        
+        print("Generating summary...")
+        summary = self.generate_summary(interactions)
+        
+        print("Creating social media image...")
+        image_filename = self.generate_social_media_image(summary)
+        
+        flow_name = self.flow_data.get('name', 'Unknown Flow')
+        report = f"""# Arcade Flow Analysis Report
+
+**Flow Name:** {flow_name}
+**Generated:** {datetime.now().strftime('%B %d, %Y at %I:%M %p')}
+
+---
+
+## Overview
+
+{summary}
+
+---
+
+## User Interactions
+
+"""
+
+        for i, interaction in enumerate(interactions, 1):
+            report += f"{i}. **{interaction['action']}**\n"
+            if interaction.get('details'):
+                report += f"   - _{interaction['details']}_\n"
+            report += "\n"
+        
+        report += f"""---
+
+## Key Insights
+
+This flow demonstrates a user journey where the user:
+- Navigated through the interface
+- Interacted with various elements
+- Completed their intended task
+
+The flow showcases an intuitive user experience with clear interactions at each step.
+
+---
+
+## Social Media Image
+
+![Flow Social Media Image](./{image_filename})
+
+
+## Flow Statistics
+
+- **Total Steps:** {len(self.flow_data.get('steps', []))}
+- **User Interactions:** {len(interactions)}
+- **Flow Type:** {self.flow_data.get('useCase', 'Unknown')}
+
+---
+"""
+        return report
 
 
 def main():
@@ -219,31 +333,13 @@ def main():
     
     try:
         analyzer = FlowAnalyzer('flow.json')
-        print("\nFlow loaded successfully!")
-        analyzer.display_flow_info()
+        report = analyzer.generate_report()
         
-        # Extract and display user interactions
-        print("\n" + "=" * 50)
-        print("EXTRACTING USER INTERACTIONS")
-        print("=" * 50)
-        interactions = analyzer.extract_user_interactions()
+        with open('FLOW_REPORT.md', 'w') as f:
+            f.write(report)
         
-        print(f"\nFound {len(interactions)} user interactions:\n")
-        for i, interaction in enumerate(interactions, 1):
-            print(f"{i}. {interaction['action']}")
-            if interaction.get('details'):
-                print(f"   └─ {interaction['details']}")
-        
-        print("\n" + "=" * 50)
-        print("GENERATING AI SUMMARY")
-        print("=" * 50)
-        summary = analyzer.generate_summary(interactions)
-        
-        print("\n" + "-" * 50)
-        print("SUMMARY")
-        print("-" * 50)
-        print(summary)
-        print("-" * 50)
+        print("\nAnalysis complete!")
+        print("Report saved to: FLOW_REPORT.md")
         
     except Exception as e:
         print(f"\nError: {e}")
